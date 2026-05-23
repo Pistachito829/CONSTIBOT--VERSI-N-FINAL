@@ -1,0 +1,6 @@
+{
+  "name": "CONSTI-BOT",
+  "description": "Tutor Socrático de Derecho Constitucional C para el análisis guiado por IA de jurisprudencias y casos de estudio académicos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
