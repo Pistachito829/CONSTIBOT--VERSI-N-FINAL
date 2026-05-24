@@ -10,7 +10,6 @@ import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import crypto from "crypto";
 import { GoogleGenAI, Type } from "@google/genai";
-import { createServer as createViteServer } from "vite";
 import { createRequire } from "module";
 
 const isESM = typeof require === 'undefined';
@@ -1470,11 +1469,16 @@ Esquema del JSON esperado:
 
   // --- INTEGRACIÓN VITE Y RUTA DE ARCHIVOS ---
   if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
+    try {
+      const viteModule = await import("vite");
+      const vite = await viteModule.createServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+    } catch (e) {
+      console.warn("Vite no está disponible, omitiendo middleware de desarrollo.");
+    }
   } else {
     app.use(express.static(path.join(myDirname, "dist")));
 
