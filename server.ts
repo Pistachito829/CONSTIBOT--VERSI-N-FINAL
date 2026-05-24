@@ -1467,15 +1467,7 @@ Esquema del JSON esperado:
     }
   });
 
-  // --- API 404 FALLBACK FOR DEBUGGING ---
-  app.use("/api", (req, res) => {
-    res.status(404).json({ 
-      error: "Ruta de API no encontrada (404)", 
-      url: req.url, 
-      originalUrl: req.originalUrl,
-      method: req.method
-    });
-  });
+
 
   // --- INTEGRACIÓN VITE Y RUTA DE ARCHIVOS ---
   if (process.env.NODE_ENV !== "production") {
@@ -1497,21 +1489,10 @@ Esquema del JSON esperado:
     });
   }
 
-  if (!process.env.VERCEL) {
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`[CONSTI-BOT] Servidor en ejecución en el puerto ${PORT}`);
-      console.log(`[CONSTI-BOT] Ambiente: ${process.env.NODE_ENV || 'development'}`);
-    });
-  }
-  
-  return app;
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`[CONSTI-BOT] Servidor en ejecución en el puerto ${PORT}`);
+    console.log(`[CONSTI-BOT] Ambiente: ${process.env.NODE_ENV || 'development'}`);
+  });
 }
 
-// Vercel serverless functions require a synchronous export of the app, 
-// or an async handler. We'll export a handler that awaits startServer.
-let appPromise = startServer();
-
-export default async function handler(req: any, res: any) {
-  const app = await appPromise;
-  return app(req, res);
-}
+startServer();
