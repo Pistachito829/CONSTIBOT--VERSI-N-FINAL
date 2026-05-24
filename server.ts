@@ -1482,10 +1482,16 @@ Esquema del JSON esperado:
       console.warn("Vite no está disponible, omitiendo middleware de desarrollo.");
     }
   } else {
-    app.use(express.static(path.join(myDirname, "dist")));
+    // Cuando corremos `node dist/server.cjs`, __dirname es `dist/`.
+    // Por lo tanto, index.html está directamente en __dirname.
+    const staticDir = fs.existsSync(path.join(myDirname, "index.html")) 
+      ? myDirname 
+      : path.join(myDirname, "dist");
+
+    app.use(express.static(staticDir));
 
     app.get("*", (req, res) => {
-      res.sendFile(path.join(myDirname, "dist", "index.html"));
+      res.sendFile(path.join(staticDir, "index.html"));
     });
   }
 
