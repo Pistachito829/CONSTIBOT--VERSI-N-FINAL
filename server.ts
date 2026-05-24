@@ -1483,10 +1483,21 @@ Esquema del JSON esperado:
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[CONSTI-BOT] Servidor en ejecución en el puerto ${PORT}`);
-    console.log(`[CONSTI-BOT] Ambiente: ${process.env.NODE_ENV || 'development'}`);
-  });
+  if (!process.env.VERCEL) {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`[CONSTI-BOT] Servidor en ejecución en el puerto ${PORT}`);
+      console.log(`[CONSTI-BOT] Ambiente: ${process.env.NODE_ENV || 'development'}`);
+    });
+  }
+  
+  return app;
 }
 
-startServer();
+// Vercel serverless functions require a synchronous export of the app, 
+// or an async handler. We'll export a handler that awaits startServer.
+let appPromise = startServer();
+
+export default async function handler(req: any, res: any) {
+  const app = await appPromise;
+  return app(req, res);
+}
