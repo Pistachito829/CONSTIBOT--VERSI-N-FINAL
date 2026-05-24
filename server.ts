@@ -1467,6 +1467,16 @@ Esquema del JSON esperado:
     }
   });
 
+  // --- API 404 FALLBACK FOR DEBUGGING ---
+  app.use("/api", (req, res) => {
+    res.status(404).json({ 
+      error: "Ruta de API no encontrada (404)", 
+      url: req.url, 
+      originalUrl: req.originalUrl,
+      method: req.method
+    });
+  });
+
   // --- INTEGRACIÓN VITE Y RUTA DE ARCHIVOS ---
   if (process.env.NODE_ENV !== "production") {
     try {
