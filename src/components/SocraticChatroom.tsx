@@ -38,7 +38,7 @@ export function SocraticChatroom({ user, caseId, onGoBack }: SocraticChatroomPro
       // First boot: Seed first socratic question from active phase index
       const firstMsgText = caseData.socraticPhases[activeFicha.currentPhaseIndex]?.question || caseData.socraticPhases[0].question;
       const seedMsg = db.addChatMessage({
-        id: `seed-${Date.now()}`,
+        id: crypto.randomUUID(),
         username: user.username,
         caseId: caseId,
         sender: 'bot',
@@ -190,7 +190,7 @@ Se completó y certificó tu Ficha Académica al 100%. Ya puedes exportarla en f
 
     // Append user message local representation
     const userMsg = db.addChatMessage({
-      id: `usr-${Date.now()}`,
+      id: crypto.randomUUID(),
       username: user.username,
       caseId: caseId,
       sender: 'user',
@@ -225,22 +225,30 @@ Se completó y certificó tu Ficha Académica al 100%. Ya puedes exportarla en f
       const replyJson = await response.json();
 
       // Check if success
-      if (replyJson.botResponse && replyJson.updatedFicha) {
+      if (replyJson.botResponse) {
         // Save Bot Chat message
         const botMsg = db.addChatMessage({
-          id: `bot-${Date.now()}`,
+          id: crypto.randomUUID(),
           username: user.username,
           caseId: caseId,
           sender: 'bot',
           text: replyJson.botResponse,
-          timestamp: new Date().toISOString(),
-          ragSource: replyJson.ragBadge?.source || 'Base de datos RAG activa',
-          ragSimilarity: replyJson.ragBadge?.similarity || 0.92
+          timestamp: new Date().toISOString()
         });
 
         setMessages(prev => [...prev, botMsg]);
-        setFicha(replyJson.updatedFicha);
-        db.saveFicha(replyJson.updatedFicha);
+        
+        // ONLY update phase progression from AI, DO NOT overwrite student's manual Ficha fields
+        if (replyJson.updatedFicha) {
+          const newFicha = { 
+            ...ficha, 
+            completed: replyJson.updatedFicha.completed || ficha.completed,
+            currentPhaseIndex: replyJson.updatedFicha.currentPhaseIndex !== undefined ? replyJson.updatedFicha.currentPhaseIndex : ficha.currentPhaseIndex
+          };
+          setFicha(newFicha);
+          db.saveFicha(newFicha);
+        }
+        
         setApiKeyError(false);
       } else {
         throw new Error("Formato de respuesta Gemini inválido.");
@@ -255,7 +263,7 @@ Se completó y certificó tu Ficha Académica al 100%. Ya puedes exportarla en f
         const mockResult = computeLocalFallbackSocraticAnswer(userText, ficha);
 
         const botMockMsg = db.addChatMessage({
-          id: `bot-${Date.now()}`,
+          id: crypto.randomUUID(),
           username: user.username,
           caseId: caseId,
           sender: 'bot',
@@ -311,17 +319,23 @@ Se completó y certificó tu Ficha Académica al 100%. Ya puedes exportarla en f
 
     const firstMsgText = caseData.socraticPhases[0].question;
     const seedMsg = db.addChatMessage({
-      id: `seed-${Date.now()}`,
+      id: crypto.randomUUID(),
       username: user.username,
       caseId: caseId,
       sender: 'bot',
-      text: firstMsgText,
-      timestamp: new Date().toISOString(),
-      ragSource: `Base de Jurisprudencias C - Guía Inicial`
+      text: "Hola, estudiante! estoy aqui para guiarte en este caso. " + firstMsgText,
+      timestamp: new Date().toISOString()
     });
 
     setMessages([seedMsg]);
     setApiKeyError(false);
+  };
+
+  const handleFichaChange = (field: keyof StudentFicha, value: string) => {
+    if (!ficha) return;
+    const newFicha = { ...ficha, [field]: value };
+    setFicha(newFicha);
+    db.saveFicha(newFicha);
   };
 
   const handlesExportPDF = () => {
@@ -368,10 +382,9 @@ Se completó y certificó tu Ficha Académica al 100%. Ya puedes exportarla en f
               className={`px-3.5 py-1.5 text-xs font-bold rounded-lg inline-flex items-center gap-1.5 transition-all text-white cursor-pointer shadow-3xs border border-transparent ${
                 ficha.completed 
                   ? 'bg-emerald-600 hover:bg-emerald-700' 
-                  : 'bg-academic-600/60 hover:bg-academic-600 cursor-not-allowed'
+                  : 'bg-academic-600 hover:bg-academic-700'
               }`}
-              disabled={!ficha.completed}
-              title={ficha.completed ? "Descargar ficha oficial" : "Completá todas las fases para descargar"}
+              title={ficha.completed ? "Descargar ficha oficial" : "Descargar ficha en progreso"}
             >
               <FileDown size={14} />
               Exportar PDF
@@ -425,19 +438,6 @@ Se completó y certificó tu Ficha Académica al 100%. Ya puedes exportarla en f
                       <p className="whitespace-pre-line">{m.text}</p>
                     </div>
 
-                    {/* RAG Context metadata Badge (If Bot message with RAG sources) */}
-                    {isBot && m.ragSource && (
-                      <div className="flex items-center gap-1.5 px-2 py-1 bg-gray-100 rounded text-[10px] text-gray-500 max-w-max">
-                        <Sparkles size={10} className="text-academic-500 font-bold fill-academic-100" />
-                        <span>Fuente RAG: <b>{m.ragSource}</b></span>
-                        {m.ragSimilarity && (
-                          <>
-                            <span className="text-gray-300">|</span>
-                            <span>Similitud: <b>{Math.round(m.ragSimilarity * 100)}%</b></span>
-                          </>
-                        )}
-                      </div>
-                    )}
                   </div>
                 </div>
               );
@@ -465,14 +465,14 @@ Se completó y certificó tu Ficha Académica al 100%. Ya puedes exportarla en f
               autoFocus
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              disabled={isTyping || ficha?.completed}
+              disabled={isTyping}
             />
             <button
               type="submit"
               className={`p-2 px-3.5 bg-academic-500 text-white rounded-md text-xs font-semibold cursor-pointer shrink-0 transition-colors ${
-                (isTyping || ficha?.completed || !inputText.trim()) ? 'bg-academic-400 cursor-not-allowed' : 'hover:bg-academic-600'
+                (isTyping || !inputText.trim()) ? 'bg-academic-400 cursor-not-allowed' : 'hover:bg-academic-600'
               }`}
-              disabled={isTyping || ficha?.completed || !inputText.trim()}
+              disabled={isTyping || !inputText.trim()}
             >
               <Send size={14} />
             </button>
@@ -533,66 +533,96 @@ Se completó y certificó tu Ficha Académica al 100%. Ya puedes exportarla en f
 
             {/* NOMBRE DEL FALLO */}
             <div className="bg-white p-3 rounded border border-gray-150 shadow-3xs">
-              <span className="text-[9px] text-gray-400 font-mono block">NOMBRE DEL FALLO</span>
-              <span className="text-xs font-semibold text-gray-800 block mt-1">
-                {ficha.nombreDelFallo && ficha.nombreDelFallo !== '—' ? ficha.nombreDelFallo : caseData.title}
-              </span>
+              <span className="text-[9px] text-gray-400 font-mono block mb-1">NOMBRE DEL FALLO</span>
+              <input 
+                type="text"
+                value={ficha.nombreDelFallo && ficha.nombreDelFallo !== '—' ? ficha.nombreDelFallo : caseData.title} 
+                onChange={(e) => handleFichaChange('nombreDelFallo', e.target.value)}
+                className="w-full text-xs font-semibold text-gray-800 focus:outline-none focus:border-b focus:border-academic-500 bg-transparent"
+              />
             </div>
 
             {/* Fallos & Año */}
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-white p-3 rounded border border-gray-150 shadow-3xs">
-                <span className="text-[9px] text-gray-400 font-mono block">FALLOS</span>
-                <span className="text-xs font-semibold text-gray-800 block mt-1">
-                  {ficha.fallos || '—'}
-                </span>
+                <span className="text-[9px] text-gray-400 font-mono block mb-1">FALLOS</span>
+                <input 
+                  type="text"
+                  value={ficha.fallos || ''} 
+                  onChange={(e) => handleFichaChange('fallos', e.target.value)}
+                  className="w-full text-xs font-semibold text-gray-800 focus:outline-none focus:border-b focus:border-academic-500 bg-transparent"
+                  placeholder="Ej: Fallos: 306:400"
+                />
               </div>
               <div className="bg-white p-3 rounded border border-gray-150 shadow-3xs">
-                <span className="text-[9px] text-gray-400 font-mono block">AÑO</span>
-                <span className="text-xs font-semibold text-gray-800 block mt-1">
-                  {ficha.ano && ficha.ano !== '—' ? ficha.ano : caseData.year}
-                </span>
+                <span className="text-[9px] text-gray-400 font-mono block mb-1">AÑO</span>
+                <input 
+                  type="text"
+                  value={ficha.ano && ficha.ano !== '—' ? ficha.ano : caseData.year} 
+                  onChange={(e) => handleFichaChange('ano', e.target.value)}
+                  className="w-full text-xs font-semibold text-gray-800 focus:outline-none focus:border-b focus:border-academic-500 bg-transparent"
+                />
               </div>
             </div>
 
             {/* Hechos */}
             <div className="bg-white p-3.5 rounded border border-gray-150 shadow-3xs">
               <span className="text-[9px] text-gray-400 font-mono block mb-1">HECHOS</span>
-              <p className="text-xs text-gray-800 leading-relaxed font-normal">
-                {ficha.hechos || '—'}
-              </p>
+              <textarea 
+                value={ficha.hechos || ''} 
+                onChange={(e) => handleFichaChange('hechos', e.target.value)}
+                className="w-full text-xs text-gray-800 leading-relaxed font-normal focus:outline-none resize-none bg-transparent"
+                rows={4}
+                placeholder="Redactá los hechos aquí..."
+              />
             </div>
 
             {/* Cuestiones presentadas */}
             <div className="bg-white p-3.5 rounded border border-gray-150 shadow-3xs">
               <span className="text-[9px] text-gray-400 font-mono block mb-1">CUESTIONES PRESENTADAS</span>
-              <p className="text-xs text-gray-800 leading-relaxed font-normal">
-                {ficha.cuestionesPresentadas || '—'}
-              </p>
+              <textarea 
+                value={ficha.cuestionesPresentadas || ''} 
+                onChange={(e) => handleFichaChange('cuestionesPresentadas', e.target.value)}
+                className="w-full text-xs text-gray-800 leading-relaxed font-normal focus:outline-none resize-none bg-transparent"
+                rows={3}
+                placeholder="¿Qué se debate?"
+              />
             </div>
 
             {/* Primera y Segunda Instancia */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="bg-white p-3 rounded border border-gray-150 shadow-3xs">
-                <span className="text-[9px] text-gray-400 font-mono block">PRIMERA INSTANCIA</span>
-                <span className="text-xs font-semibold text-gray-800 block mt-1">
-                  {ficha.primeraInstancia || '—'}
-                </span>
+                <span className="text-[9px] text-gray-400 font-mono block mb-1">PRIMERA INSTANCIA</span>
+                <textarea 
+                  value={ficha.primeraInstancia || ''} 
+                  onChange={(e) => handleFichaChange('primeraInstancia', e.target.value)}
+                  className="w-full text-xs font-semibold text-gray-800 focus:outline-none resize-none bg-transparent"
+                  rows={2}
+                  placeholder="Resolución primera instancia..."
+                />
               </div>
               <div className="bg-white p-3 rounded border border-gray-150 shadow-3xs">
-                <span className="text-[9px] text-gray-400 font-mono block">SEGUNDA INSTANCIA</span>
-                <span className="text-xs font-semibold text-gray-800 block mt-1">
-                  {ficha.segundaInstancia || '—'}
-                </span>
+                <span className="text-[9px] text-gray-400 font-mono block mb-1">SEGUNDA INSTANCIA</span>
+                <textarea 
+                  value={ficha.segundaInstancia || ''} 
+                  onChange={(e) => handleFichaChange('segundaInstancia', e.target.value)}
+                  className="w-full text-xs font-semibold text-gray-800 focus:outline-none resize-none bg-transparent"
+                  rows={2}
+                  placeholder="Resolución segunda instancia..."
+                />
               </div>
             </div>
 
             {/* Tipo de jurisdicción invocada */}
             <div className="bg-white p-3.5 rounded border border-gray-150 shadow-3xs">
               <span className="text-[9px] text-gray-400 font-mono block mb-1">TIPO DE JURISDICCIÓN INVOCADA PARA ACCEDER A LA CORTE SUPREMA</span>
-              <p className="text-xs text-gray-800 leading-relaxed font-normal">
-                {ficha.tipoJurisdiccionInvocada || '—'}
-              </p>
+              <textarea 
+                value={ficha.tipoJurisdiccionInvocada || ''} 
+                onChange={(e) => handleFichaChange('tipoJurisdiccionInvocada', e.target.value)}
+                className="w-full text-xs text-gray-800 leading-relaxed font-normal focus:outline-none resize-none bg-transparent"
+                rows={2}
+                placeholder="Ej: Recurso Extraordinario Federal..."
+              />
             </div>
 
             {/* Opinión del Procurador General */}
@@ -600,12 +630,22 @@ Se completó y certificó tu Ficha Académica al 100%. Ya puedes exportarla en f
               <span className="text-[10px] text-academic-700 font-bold font-sans uppercase tracking-wider block">OPINIÓN DEL PROCURADOR GENERAL</span>
               <div className="pl-2 border-l border-gray-200 space-y-2">
                 <div>
-                  <span className="text-[8.5px] text-gray-400 font-mono block uppercase">Principios elaborados</span>
-                  <p className="text-xs text-gray-800 font-medium leading-relaxed">{ficha.procuradorGeneral_principios || '—'}</p>
+                  <span className="text-[8.5px] text-gray-400 font-mono block uppercase mb-1">Principios elaborados</span>
+                  <textarea 
+                    value={ficha.procuradorGeneral_principios || ''} 
+                    onChange={(e) => handleFichaChange('procuradorGeneral_principios', e.target.value)}
+                    className="w-full text-xs text-gray-800 font-medium leading-relaxed focus:outline-none resize-none bg-transparent"
+                    rows={2}
+                  />
                 </div>
                 <div>
-                  <span className="text-[8.5px] text-gray-400 font-mono block uppercase">Razonamiento</span>
-                  <p className="text-xs text-gray-800 leading-relaxed">{ficha.procuradorGeneral_razonamiento || '—'}</p>
+                  <span className="text-[8.5px] text-gray-400 font-mono block uppercase mb-1">Razonamiento</span>
+                  <textarea 
+                    value={ficha.procuradorGeneral_razonamiento || ''} 
+                    onChange={(e) => handleFichaChange('procuradorGeneral_razonamiento', e.target.value)}
+                    className="w-full text-xs text-gray-800 leading-relaxed focus:outline-none resize-none bg-transparent"
+                    rows={3}
+                  />
                 </div>
               </div>
             </div>
@@ -615,12 +655,22 @@ Se completó y certificó tu Ficha Académica al 100%. Ya puedes exportarla en f
               <span className="text-[10px] text-academic-900 font-bold font-sans uppercase tracking-wider block">DECISIÓN DE LA CORTE SUPREMA</span>
               <div className="pl-2 border-l border-gray-200 space-y-2">
                 <div>
-                  <span className="text-[8.5px] text-gray-400 font-mono block uppercase">Principios elaborados</span>
-                  <p className="text-xs text-gray-800 font-medium leading-relaxed">{ficha.decisionCorte_principios || '—'}</p>
+                  <span className="text-[8.5px] text-gray-400 font-mono block uppercase mb-1">Principios elaborados</span>
+                  <textarea 
+                    value={ficha.decisionCorte_principios || ''} 
+                    onChange={(e) => handleFichaChange('decisionCorte_principios', e.target.value)}
+                    className="w-full text-xs text-gray-800 font-medium leading-relaxed focus:outline-none resize-none bg-transparent"
+                    rows={2}
+                  />
                 </div>
                 <div>
-                  <span className="text-[8.5px] text-gray-400 font-mono block uppercase">Razonamiento</span>
-                  <p className="text-xs text-gray-800 leading-relaxed">{ficha.decisionCorte_razonamiento || '—'}</p>
+                  <span className="text-[8.5px] text-gray-400 font-mono block uppercase mb-1">Razonamiento</span>
+                  <textarea 
+                    value={ficha.decisionCorte_razonamiento || ''} 
+                    onChange={(e) => handleFichaChange('decisionCorte_razonamiento', e.target.value)}
+                    className="w-full text-xs text-gray-800 leading-relaxed focus:outline-none resize-none bg-transparent"
+                    rows={3}
+                  />
                 </div>
               </div>
             </div>
@@ -630,12 +680,22 @@ Se completó y certificó tu Ficha Académica al 100%. Ya puedes exportarla en f
               <span className="text-[10px] text-gray-600 font-bold font-sans uppercase tracking-wider block">DISIDENCIA O CONCURRENCIA</span>
               <div className="pl-2 border-l border-gray-200 space-y-2">
                 <div>
-                  <span className="text-[8.5px] text-gray-400 font-mono block uppercase">Principios elaborados</span>
-                  <p className="text-xs text-gray-800 font-medium leading-relaxed">{ficha.disidenciaConcurrencia_principios || '—'}</p>
+                  <span className="text-[8.5px] text-gray-400 font-mono block uppercase mb-1">Principios elaborados</span>
+                  <textarea 
+                    value={ficha.disidenciaConcurrencia_principios || ''} 
+                    onChange={(e) => handleFichaChange('disidenciaConcurrencia_principios', e.target.value)}
+                    className="w-full text-xs text-gray-800 font-medium leading-relaxed focus:outline-none resize-none bg-transparent"
+                    rows={2}
+                  />
                 </div>
                 <div>
-                  <span className="text-[8.5px] text-gray-400 font-mono block uppercase">Razonamiento</span>
-                  <p className="text-xs text-gray-800 leading-relaxed">{ficha.disidenciaConcurrencia_razonamiento || '—'}</p>
+                  <span className="text-[8.5px] text-gray-400 font-mono block uppercase mb-1">Razonamiento</span>
+                  <textarea 
+                    value={ficha.disidenciaConcurrencia_razonamiento || ''} 
+                    onChange={(e) => handleFichaChange('disidenciaConcurrencia_razonamiento', e.target.value)}
+                    className="w-full text-xs text-gray-800 leading-relaxed focus:outline-none resize-none bg-transparent"
+                    rows={3}
+                  />
                 </div>
               </div>
             </div>
@@ -643,9 +703,12 @@ Se completó y certificó tu Ficha Académica al 100%. Ya puedes exportarla en f
             {/* Obiter dictum */}
             <div className="bg-white p-3.5 rounded border border-gray-150 shadow-3xs">
               <span className="text-[9px] text-gray-400 font-mono block mb-1">OBITER DICTUM SIGNIFICATIVO</span>
-              <p className="text-xs text-gray-800 italic leading-relaxed font-medium">
-                {ficha.obiterDictumSignificativo || '—'}
-              </p>
+              <textarea 
+                value={ficha.obiterDictumSignificativo || ''} 
+                onChange={(e) => handleFichaChange('obiterDictumSignificativo', e.target.value)}
+                className="w-full text-xs text-gray-800 italic leading-relaxed font-medium focus:outline-none resize-none bg-transparent"
+                rows={3}
+              />
             </div>
           </div>
 

@@ -27,6 +27,7 @@ export function TeacherDashboard({ user, onLogout }: TeacherDashboardProps) {
   const [studentsList, setStudentsList] = useState<UserProfile[]>(() => db.getStudents());
   const [newStudentName, setNewStudentName] = useState('');
   const [newStudentLegajo, setNewStudentLegajo] = useState('');
+  const [newStudentPassword, setNewStudentPassword] = useState('');
   const [studentError, setStudentError] = useState('');
   const [studentSuccess, setStudentSuccess] = useState('');
   const [bulkInput, setBulkInput] = useState('');
@@ -60,7 +61,7 @@ export function TeacherDashboard({ user, onLogout }: TeacherDashboardProps) {
   };
 
   // --- TAB 4: ADD AND REMOVE STUDENTS ---
-  const handleAddStudent = (e: React.FormEvent) => {
+  const handleAddStudent = async (e: React.FormEvent) => {
     e.preventDefault();
     setStudentError('');
     setStudentSuccess('');
@@ -71,17 +72,45 @@ export function TeacherDashboard({ user, onLogout }: TeacherDashboardProps) {
     }
 
     try {
-      db.addStudent(newStudentLegajo.trim(), newStudentName.trim());
+      const res = await fetch('/api/admin/add-student', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: newStudentLegajo.trim(),
+          name: newStudentName.trim(),
+          password: newStudentPassword || '123'
+        })
+      });
+      
+      const text = await res.text();
+      let data: any = {};
+      try { data = text ? JSON.parse(text) : {}; } catch(e) {}
+
+      if (!res.ok) throw new Error(data.error || "Error al sincronizar con el servidor: " + text.substring(0, 50));
+
+      // Si el backend es exitoso, agregamos al frontend manualmente para no disparar otro fetch (race condition)
+      const profiles = db.getProfiles();
+      profiles.push({
+         id: data.profile?.id || crypto.randomUUID(),
+         username: newStudentLegajo.trim().toUpperCase(),
+         name: newStudentName.trim(),
+         role: 'student',
+         activated: true,
+         createdAt: new Date().toISOString()
+      });
+      localStorage.setItem('cb_profiles', JSON.stringify(profiles));
+
       setNewStudentName('');
       setNewStudentLegajo('');
-      setStudentSuccess('Alumno registrado con éxito en el legajo de cursada.');
+      setNewStudentPassword('');
+      setStudentSuccess(`Alumno registrado y activado con éxito. Contraseña: "${newStudentPassword || '123'}".`);
       setStudentsList(db.getStudents());
     } catch (err: any) {
       setStudentError(err.message || 'Error al guardar alumno.');
     }
   };
 
-  const handleBulkImport = (e: React.FormEvent) => {
+  const handleBulkImport = async (e: React.FormEvent) => {
     e.preventDefault();
     setBulkError('');
     setBulkSuccess('');
@@ -95,16 +124,19 @@ export function TeacherDashboard({ user, onLogout }: TeacherDashboardProps) {
     let importedCount = 0;
     let errors: string[] = [];
 
-    lines.forEach((line, idx) => {
-      const trimmedLine = line.trim();
-      if (!trimmedLine) return; // Skip empty lines
+    const profiles = db.getProfiles(); // Cargar la base de datos local
+    let needsUpdate = false;
 
-      // Supports comma or tab separation
+    for (let idx = 0; idx < lines.length; idx++) {
+      const line = lines[idx];
+      const trimmedLine = line.trim();
+      if (!trimmedLine) continue;
+
       const separator = trimmedLine.includes(',') ? ',' : '\t';
       const parts = trimmedLine.split(separator);
       if (parts.length < 2) {
         errors.push(`Fila ${idx + 1} descarta formato "Legajo${separator} Nombre".`);
-        return;
+        continue;
       }
 
       const rawLegajo = parts[0].trim();
@@ -112,22 +144,52 @@ export function TeacherDashboard({ user, onLogout }: TeacherDashboardProps) {
 
       if (!rawLegajo || !rawName) {
         errors.push(`Fila ${idx + 1} posee campos vacíos.`);
-        return;
+        continue;
+      }
+
+      if (profiles.some(p => p.username.toUpperCase() === rawLegajo.toUpperCase())) {
+        errors.push(`Fila ${idx + 1} (${rawLegajo}): Ya se encuentra registrado.`);
+        continue;
       }
 
       try {
-        db.addStudent(rawLegajo, rawName);
+        const res = await fetch('/api/admin/add-student', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: rawLegajo, name: rawName, password: '123' })
+        });
+        
+        const text = await res.text();
+        let data: any = {};
+        try { data = text ? JSON.parse(text) : {}; } catch(e) {}
+
+        if (!res.ok) throw new Error(data.error || "Error API bulk: " + text.substring(0, 50));
+
+        profiles.push({
+           id: data.profile?.id || crypto.randomUUID(),
+           username: rawLegajo.toUpperCase(),
+           name: rawName,
+           role: 'student',
+           activated: true,
+           createdAt: new Date().toISOString()
+        });
+        
+        needsUpdate = true;
         importedCount++;
       } catch (err: any) {
         errors.push(`Fila ${idx + 1} (${rawLegajo}): ${err.message}`);
       }
-    });
+    }
+    
+    if (needsUpdate) {
+      localStorage.setItem('cb_profiles', JSON.stringify(profiles));
+    }
 
     setStudentsList(db.getStudents());
     setBulkInput('');
 
     if (importedCount > 0) {
-      setBulkSuccess(`¡Se han cargado y pre-autorizado ${importedCount} legajados académicos con éxito en el sistema!`);
+      setBulkSuccess(`¡Se han cargado y activado ${importedCount} legajos académicos con éxito (contraseña: 123)!`);
     }
     if (errors.length > 0) {
       setBulkError(`Contratiempos al importar: ${errors.slice(0, 3).join(' | ')}${errors.length > 3 ? '...' : ''}`);
@@ -197,7 +259,7 @@ export function TeacherDashboard({ user, onLogout }: TeacherDashboardProps) {
       
       // Seed-backup logic for demo safety
       setTimeout(() => {
-        const fallbackId = `caso-custom-${Date.now()}`;
+        const fallbackId = crypto.randomUUID();
         const mockNewCase: FalloCase = {
           id: fallbackId,
           title: 'Fallo Siri (1957) - AI Local',
@@ -260,7 +322,7 @@ export function TeacherDashboard({ user, onLogout }: TeacherDashboardProps) {
         setUploadPercent(currentPercent);
         if (currentPercent === 25) setPipelineStep(1); // Extracción de texto
         if (currentPercent === 55) setPipelineStep(2); // Segmentación semántica (Chunking)
-        if (currentPercent === 75) setPipelineStep(3); // Generación de Embeddings (text-embedding-004)
+        if (currentPercent === 75) setPipelineStep(3); // Generación de Embeddings (gemini-embedding-2)
       }
     }, 150);
 
@@ -315,7 +377,7 @@ export function TeacherDashboard({ user, onLogout }: TeacherDashboardProps) {
           } else {
             // fallback
             db.addDocument({
-              id: `doc-${Date.now()}`,
+              id: crypto.randomUUID(),
               name: fileName,
               size: sizeStr,
               status: 'Indexado',
@@ -331,7 +393,7 @@ export function TeacherDashboard({ user, onLogout }: TeacherDashboardProps) {
         clearInterval(visualInterval);
         setIsUploading(false);
         console.error("Error cargando documento:", uploadError);
-        alert(`Error en canalización RAG con text-embedding-004: ${uploadError.message}`);
+        alert(`Error en canalización RAG con gemini-embedding-2: ${uploadError.message}`);
       }
     };
 
@@ -371,6 +433,24 @@ export function TeacherDashboard({ user, onLogout }: TeacherDashboardProps) {
     return db.getFichaForStudent(selectedAuditStudent, selectedAuditCase);
   }, [selectedAuditStudent, selectedAuditCase]);
 
+  const handleDownloadLogs = () => {
+    if (currentAuditChatHistory.length === 0) return;
+    const textContent = currentAuditChatHistory.map(m => {
+      const sender = m.sender === 'bot' ? 'BOT SÓCRATICO' : `ALUMNO (${m.username})`;
+      const time = new Date(m.timestamp).toLocaleTimeString('es-AR');
+      return `[${time}] ${sender}:\n${m.text}\n`;
+    }).join('\n');
+    const blob = new Blob([textContent], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `auditoria_chat_${selectedAuditStudent}_${selectedAuditCase}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   // --- TELEMETRY CALCULATIONS FOR TAB 1 ---
   // Active statistics derived from db collections
   const dashboardStats = useMemo(() => {
@@ -383,12 +463,32 @@ export function TeacherDashboard({ user, onLogout }: TeacherDashboardProps) {
       ? Math.round((completedFichas / totalFichas.length) * 100) 
       : 0;
 
+    const casesMessageCount = chatsAll.reduce((acc, chat) => {
+      acc[chat.caseId] = (acc[chat.caseId] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    
+    const maxMessages = Math.max(...Object.values(casesMessageCount), 1);
+    
+    const topCases = Object.entries(casesMessageCount)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([caseId, count]) => {
+        const caseObj = db.getCases().find(c => c.id === caseId);
+        return { 
+          title: caseObj?.title || caseId, 
+          count, 
+          percentage: Math.round((count / maxMessages) * 100) 
+        };
+      });
+
     return {
       activeStudents: profilesCount,
       messagesProcessed: messageVolume,
       completionRate,
       totalDocuments: db.getDocuments().length,
-      casesActive: db.getCases().length
+      casesActive: db.getCases().length,
+      topCases
     };
   }, [studentsList, docsList, casesList]);
 
@@ -409,7 +509,7 @@ export function TeacherDashboard({ user, onLogout }: TeacherDashboardProps) {
           <div className="flex items-center gap-5">
             <div className="text-right">
               <p className="text-[9px] text-academic-300 font-bold font-mono tracking-wider">CÁTEDRA C TITULAR</p>
-              <p className="text-sm font-semibold text-white">{user.name}</p>
+              <p className="text-sm font-semibold text-white">{user.name === 'Dra. Elena Bianchi' ? 'Administrador' : user.name}</p>
             </div>
             <button
               onClick={onLogout}
@@ -516,56 +616,38 @@ export function TeacherDashboard({ user, onLogout }: TeacherDashboardProps) {
 
               {/* GORGEOUS CUSTOM SVG CHARTS */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-                {/* Friction Area Donut Chart */}
-                <div className="bg-white p-4 rounded-lg border border-gray-150 shadow-3xs flex flex-col justify-between">
+                {/* Casos más consultados */}
+                <div className="bg-white p-4 rounded-lg border border-gray-150 shadow-3xs flex flex-col">
                   <div>
-                    <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wide">Zonas de Mayor Fricción Socrática</h3>
-                    <p className="text-[10px] text-gray-400 mt-0.5">¿En qué etapa constitucional se demoran más los alumnos?</p>
+                    <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wide">Casos más consultados</h3>
+                    <p className="text-[10px] text-gray-400 mt-0.5">Distribución de mensajes socráticos por jurisprudencia</p>
                   </div>
 
-                  <div className="flex items-center justify-around py-4 mt-2">
-                    {/* SVG Segmented Donut Chart */}
-                    <svg width="150" height="150" viewBox="0 0 42 42" className="transform -rotate-90">
-                      <circle cx="21" cy="21" r="15.915" fill="transparent" stroke="#e2e8f0" strokeWidth="4" />
-                      
-                      {/* Segment 1: Razonabilidad (45%) */}
-                      <circle cx="21" cy="21" r="15.915" fill="transparent" stroke="#800020" strokeWidth="4" 
-                        strokeDasharray="45 55" strokeDashoffset="0" />
-                      {/* Segment 2: Derechos (25%) */}
-                      <circle cx="21" cy="21" r="15.915" fill="transparent" stroke="#dba6b3" strokeWidth="4" 
-                        strokeDasharray="25 75" strokeDashoffset="-45" />
-                      {/* Segment 3: Hechos (15%) */}
-                      <circle cx="21" cy="21" r="15.915" fill="transparent" stroke="#480011" strokeWidth="4" 
-                        strokeDasharray="15 85" strokeDashoffset="-70" />
-                      {/* Segment 4: Fallo Doctrina (15%) */}
-                      <circle cx="21" cy="21" r="15.915" fill="transparent" stroke="#5a0016" strokeWidth="4" 
-                        strokeDasharray="15 85" strokeDashoffset="-85" />
-                    </svg>
-
-                    <div className="space-y-1.5 text-xs">
-                      <div className="flex items-center gap-1.5">
-                        <span className="h-3 w-3 bg-academic-500 rounded-sm inline-block"></span>
-                        <span className="text-gray-600">Razonabilidad Art. 28 (45%)</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="h-3 w-3 bg-academic-400 rounded-sm inline-block"></span>
-                        <span className="text-gray-600">Garantías Art. 14/16 (25%)</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="h-3 w-3 bg-academic-800 rounded-sm inline-block"></span>
-                        <span className="text-gray-600">Fallo Doctrina (15%)</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="h-3 w-3 bg-academic-700 rounded-sm inline-block"></span>
-                        <span className="text-gray-600">Hechos del Caso (15%)</span>
-                      </div>
-                    </div>
+                  <div className="flex-grow flex flex-col justify-center gap-3 py-4 mt-2">
+                    {dashboardStats.topCases.length > 0 ? (
+                      dashboardStats.topCases.map((tc, idx) => (
+                        <div key={idx} className="w-full">
+                          <div className="flex justify-between items-baseline mb-1">
+                            <span className="text-xs font-semibold text-gray-700 truncate mr-2" title={tc.title}>{tc.title}</span>
+                            <span className="text-xs text-academic-500 font-bold font-mono">{tc.count} msgs</span>
+                          </div>
+                          <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden">
+                            <div 
+                              className={`h-full rounded-full ${idx === 0 ? 'bg-academic-600' : idx === 1 ? 'bg-academic-400' : 'bg-academic-300'}`} 
+                              style={{ width: `${tc.percentage}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-xs text-gray-400 text-center">No hay datos de consultas suficientes.</p>
+                    )}
                   </div>
                 </div>
 
                 {/* Query volume Area Chart */}
-                <div className="bg-white p-4 rounded-lg border border-gray-150 shadow-3xs">
-                  <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wide mb-1">Volumen Semanal de Consultas</h3>
+                <div className="bg-white p-4 rounded-lg border border-gray-150 shadow-3xs flex flex-col">
+                  <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wide mb-1">Cantidad de Consultas Semanales</h3>
                   <p className="text-[10px] text-gray-400 mb-4">Interacciones socráticas registradas en los últimos 5 días lectivos.</p>
 
                   <div className="h-40 w-full">
@@ -854,6 +936,16 @@ export function TeacherDashboard({ user, onLogout }: TeacherDashboardProps) {
                           onChange={(e) => setNewStudentLegajo(e.target.value)}
                         />
                       </div>
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-500 mb-1">Contraseña Inicial</label>
+                        <input
+                          type="text"
+                          placeholder="Por defecto: 123"
+                          className="w-full px-3 py-2 border border-gray-300 rounded focus:border-academic-500 focus:outline-none text-xs text-gray-901 font-medium"
+                          value={newStudentPassword}
+                          onChange={(e) => setNewStudentPassword(e.target.value)}
+                        />
+                      </div>
                       <button
                         type="submit"
                         className="w-full py-2 bg-academic-500 hover:bg-academic-600 text-white font-bold rounded text-xs inline-flex items-center justify-center gap-1.5 cursor-pointer shadow-3xs"
@@ -1010,10 +1102,23 @@ export function TeacherDashboard({ user, onLogout }: TeacherDashboardProps) {
               ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
                   {/* Chat logs monitor */}
-                  <div className="lg:col-span-7 bg-gray-50 border border-gray-150 rounded-lg p-4 max-h-[50vh] overflow-y-auto space-y-4">
-                    <span className="text-[10px] uppercase font-mono font-bold tracking-wider text-gray-400 block mb-3 border-b border-gray-250 pb-1.5">
-                      Registro de Conversación
-                    </span>
+                  <div className="lg:col-span-7 bg-gray-50 border border-gray-150 rounded-lg p-4 max-h-[50vh] flex flex-col space-y-4">
+                    <div className="flex justify-between items-center border-b border-gray-250 pb-1.5">
+                      <span className="text-[10px] uppercase font-mono font-bold tracking-wider text-gray-400">
+                        Registro de Conversación
+                      </span>
+                      {currentAuditChatHistory.length > 0 && (
+                        <button 
+                          onClick={handleDownloadLogs}
+                          className="flex items-center gap-1.5 text-[10px] font-bold text-academic-500 hover:text-academic-700 uppercase"
+                        >
+                          <FileText size={12} />
+                          Descargar Log (.txt)
+                        </button>
+                      )}
+                    </div>
+                    
+                    <div className="overflow-y-auto space-y-4 flex-grow">
 
                     {currentAuditChatHistory.length === 0 ? (
                       <div className="text-center py-8 italic text-xs text-gray-400">
@@ -1042,6 +1147,7 @@ export function TeacherDashboard({ user, onLogout }: TeacherDashboardProps) {
                         );
                       })
                     )}
+                    </div>
                   </div>
 
                   {/* Active Ficha view */}

@@ -36,6 +36,13 @@ CREATE TABLE IF NOT EXISTS public.cases (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Ensure the columns exist if the table already existed with an older structure
+ALTER TABLE public.cases ADD COLUMN IF NOT EXISTS socratic_phases JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.cases ADD COLUMN IF NOT EXISTS is_custom BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.cases ADD COLUMN IF NOT EXISTS core_facts TEXT;
+ALTER TABLE public.cases ADD COLUMN IF NOT EXISTS guarantees TEXT[] DEFAULT '{}';
+
+
 -- 3. Create Documents/RAG Table
 CREATE TABLE IF NOT EXISTS public.rag_documents (
     id TEXT PRIMARY KEY,
@@ -87,6 +94,30 @@ CREATE TABLE IF NOT EXISTS public.student_fichas (
     obiter_dictum_significativo TEXT DEFAULT '—',
     PRIMARY KEY (username, case_id)
 );
+
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS actor TEXT DEFAULT '—';
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS year TEXT DEFAULT '—';
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS guarantees TEXT[] DEFAULT '{}';
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS concepts TEXT[] DEFAULT '{}';
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS resolution TEXT DEFAULT '—';
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS completed BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS current_phase_index INTEGER DEFAULT 0;
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS nombre_del_fallo TEXT DEFAULT '—';
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS fallos TEXT DEFAULT '—';
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS ano TEXT DEFAULT '—';
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS hechos TEXT DEFAULT '—';
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS cuestiones_presentadas TEXT DEFAULT '—';
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS primera_instancia TEXT DEFAULT '—';
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS segunda_instancia TEXT DEFAULT '—';
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS tipo_jurisdiccion_invocada TEXT DEFAULT '—';
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS procurador_general_principios TEXT DEFAULT '—';
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS procurador_general_razonamiento TEXT DEFAULT '—';
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS decision_corte_principios TEXT DEFAULT '—';
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS decision_corte_razonamiento TEXT DEFAULT '—';
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS disidencia_concurrencia_principios TEXT DEFAULT '—';
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS disidencia_concurrencia_razonamiento TEXT DEFAULT '—';
+ALTER TABLE public.student_fichas ADD COLUMN IF NOT EXISTS obiter_dictum_significativo TEXT DEFAULT '—';
 
 ALTER TABLE public.profiles DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cases DISABLE ROW LEVEL SECURITY;
@@ -221,7 +252,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS public.document_chunks (
     id TEXT PRIMARY KEY,
-    document_id TEXT REFERENCES public.documents(id) ON DELETE CASCADE,
+    document_id TEXT REFERENCES public.rag_documents(id) ON DELETE CASCADE,
     document_name TEXT,
     case_id TEXT REFERENCES public.cases(id) ON DELETE CASCADE,
     content TEXT NOT NULL,
